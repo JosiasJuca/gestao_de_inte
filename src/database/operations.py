@@ -7,11 +7,9 @@ from datetime import date
 from src.database.models import CRIAR_TABELAS, CRIAR_INDICES
 from src.utils.constants import MODULOS_CHECKLIST
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-
-
 @contextmanager
 def get_db():
+    DATABASE_URL = os.environ.get("DATABASE_URL")
     conn = psycopg2.connect(DATABASE_URL)
     try:
         yield conn
