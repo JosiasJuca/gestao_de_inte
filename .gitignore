@@ -6,7 +6,6 @@ __pycache__/
 venv/
 env/
 .env
-*.db
 *.sqlite
 .streamlit/secrets.toml
 .idea/
