@@ -1,5 +1,25 @@
 from dotenv import load_dotenv
-load_dotenv()
+
+# Tenta carregar o .env com diferentes codificações para evitar
+# UnicodeDecodeError caso o arquivo esteja em UTF-16 ou outra
+# codificação não-UTF8. Preferimos que o .env seja salvo em UTF-8.
+try:
+    load_dotenv()
+except UnicodeDecodeError:
+    tried = False
+    for enc in ("utf-8-sig", "utf-16", "latin-1"):
+        try:
+            load_dotenv(encoding=enc)
+            tried = True
+            break
+        except UnicodeDecodeError:
+            continue
+    if not tried:
+        # Se falhar, mostra aviso simples no console — o app continuará,
+        # mas variáveis de ambiente do .env não estarão disponíveis.
+        import warnings
+
+        warnings.warn("Não foi possível decodificar .env com encodings comuns; verifique o arquivo .env")
 
 import streamlit as st
 from src.database.operations import init_db, obter_estatisticas

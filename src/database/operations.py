@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import date
 
 from src.database.models import CRIAR_TABELAS, CRIAR_INDICES
-from src.utils.constants import MODULOS_CHECKLIST
+from src.utils.constants import MODULOS_CHECKLIST, CATEGORIAS
 
 
 @st.cache_resource
@@ -260,7 +260,13 @@ def obter_estatisticas():
             else:
                 cli_map[r["cliente"]]["resolvidos"] += 1
 
-        por_categoria  = sorted([{"categoria": k, "total": v} for k, v in cat_map.items()],  key=lambda x: -x["total"])
+        # Garantir que todas as categorias definidas em CATEGORIAS apareçam
+        # no resultado, mesmo que tenham total 0.
+        por_categoria  = [
+            {"categoria": c, "total": int(cat_map.get(c, 0))}
+            for c in CATEGORIAS
+        ]
+        por_categoria = sorted(por_categoria, key=lambda x: -x["total"])
         por_responsavel = sorted([{"responsavel": k, "total": v} for k, v in resp_map.items()], key=lambda x: -x["total"])
         por_cliente    = sorted([{"cliente": k, **v} for k, v in cli_map.items()],             key=lambda x: -(x["abertos"] + x["resolvidos"]))
 

@@ -59,7 +59,7 @@ def mapear_categoria(cat: str) -> str:
     validas = {"Batida", "Escala", "Feriados", "Funcionários", "PDV", "Venda", "SSO"}
     if cat in validas:
         return cat
-    return "Geral"
+    return ""
 
 
 def normalizar_responsavel(resp: str) -> str:
@@ -240,13 +240,13 @@ def migrar():
         resolucao = ch["resolucao"] or ""
         data_ab  = str(ch["data_abertura"])[:10] if ch["data_abertura"] else hoje
         data_re  = str(ch["data_resolucao"])[:10] if ch["data_resolucao"] else None
-        cat_raw  = ch["categoria"] or "Geral"
+        cat_raw  = ch["categoria"] or ""
 
         # Categoria: tenta mapear para os módulos, senão Geral
         MAPA_CAT = {
-            "arquivo": "Geral",
-            "arquivo incorreto": "Geral",
-            "arquivo não recebido": "Geral",
+            "arquivo": "",
+            "arquivo incorreto": "",
+            "arquivo não recebido": "",
         }
         categoria = MAPA_CAT.get(cat_raw.lower(), mapear_categoria(cat_raw))
 

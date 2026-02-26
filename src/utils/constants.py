@@ -14,7 +14,7 @@ CORES_STATUS_IMPLANTACAO = {
 
 STATUS_CHAMADO = ["Aberto", "Em análise", "Aguardando cliente", "Respondido", "Resolvido"]
 
-CATEGORIAS = ["Batida", "Escala", "Feriados", "Funcionários", "PDV", "Venda", "SSO", "Geral"]
+CATEGORIAS = ["Batida", "Escala", "Feriados", "Funcionários", "PDV", "Venda", "SSO"]
 
 RESPONSABILIDADE = ["Interna", "Cliente"]
 

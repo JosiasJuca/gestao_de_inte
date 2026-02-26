@@ -54,14 +54,25 @@ def _renderizar_grafico_categorias(stats):
         values=values,
         hole=0.45,
         textinfo="label+value",
+        marker=dict(line=dict(width=0, color='rgba(0,0,0,0)')),
         hovertemplate="%{label}: %{value} chamado(s)<extra></extra>",
     )])
     fig.update_layout(
         title="Chamados abertos por categoria",
         showlegend=True,
         height=320,
-        margin=dict(t=40, b=10, l=10, r=10),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+        margin=dict(t=40, b=10, l=10, r=160),
+        legend=dict(
+            orientation="v",
+            x=1.02,
+            y=0.5,
+            xanchor="left",
+            yanchor="middle",
+            borderwidth=0,
+            bgcolor='rgba(0,0,0,0)'
+        ),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
     )
     st.plotly_chart(fig, use_container_width=True)
 
