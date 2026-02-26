@@ -1,16 +1,28 @@
 import os
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
+import streamlit as st
 from contextlib import contextmanager
 from datetime import date
 
 from src.database.models import CRIAR_TABELAS, CRIAR_INDICES
 from src.utils.constants import MODULOS_CHECKLIST
 
+
+@st.cache_resource
+def _get_pool():
+    return psycopg2.pool.ThreadedConnectionPool(
+        minconn=1,
+        maxconn=10,
+        dsn=os.environ.get("DATABASE_URL"),
+    )
+
+
 @contextmanager
 def get_db():
-    DATABASE_URL = os.environ.get("DATABASE_URL")
-    conn = psycopg2.connect(DATABASE_URL)
+    pool = _get_pool()
+    conn = pool.getconn()
     try:
         yield conn
         conn.commit()
@@ -18,7 +30,7 @@ def get_db():
         conn.rollback()
         raise
     finally:
-        conn.close()
+        pool.putconn(conn)
 
 
 def _exec(conn, sql, params=None):
