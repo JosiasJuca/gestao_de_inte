@@ -1,19 +1,18 @@
-import sqlite3
 import os
+import psycopg2
+import psycopg2.extras
 from contextlib import contextmanager
 from datetime import date
 
 from src.database.models import CRIAR_TABELAS, CRIAR_INDICES
 from src.utils.constants import MODULOS_CHECKLIST
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "gestao.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn = psycopg2.connect(DATABASE_URL)
     try:
         yield conn
         conn.commit()
@@ -24,60 +23,53 @@ def get_db():
         conn.close()
 
 
+def _exec(conn, sql, params=None):
+    """Executa uma query usando RealDictCursor e retorna o cursor."""
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(sql, params)
+    return cur
+
+
 def init_db():
     with get_db() as conn:
-        for stmt in CRIAR_TABELAS.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                conn.execute(stmt)
-        for stmt in CRIAR_INDICES.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                conn.execute(stmt)
-        # Migração: adiciona coluna se banco já existia sem ela
-        try:
-            conn.execute(
-                "ALTER TABLE clientes ADD COLUMN status_implantacao TEXT NOT NULL DEFAULT '3. Novo cliente sem integração'"
+        for stmt in CRIAR_TABELAS:
+            _exec(conn, stmt)
+        for stmt in CRIAR_INDICES:
+            _exec(conn, stmt)
+
+        # Migração: adiciona coluna status_implantacao se ainda não existir
+        col = _exec(
+            conn,
+            """SELECT column_name FROM information_schema.columns
+               WHERE table_name = 'clientes' AND column_name = 'status_implantacao'"""
+        )
+        if not col.fetchone():
+            _exec(
+                conn,
+                "ALTER TABLE clientes ADD COLUMN status_implantacao TEXT NOT NULL "
+                "DEFAULT '3. Novo cliente sem integração'"
             )
-        except Exception:
-            pass  # coluna já existe
-        # Normaliza registros antigos com valor simplificado
-        conn.execute(
+
+        # Normaliza registros antigos
+        _exec(
+            conn,
             "UPDATE clientes SET status_implantacao = '3. Novo cliente sem integração' "
             "WHERE status_implantacao = 'Novo cliente'"
         )
 
-        # Migração: renomear coluna 'titulo' para 'observacao' em 'chamados' quando necessário
-        try:
-            cols = [r[1] for r in conn.execute("PRAGMA table_info(chamados)").fetchall()]
-            if 'observacao' not in cols and 'titulo' in cols:
-                # cria tabela temporária com novo esquema (observacao)
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS chamados_new (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        cliente_id INTEGER NOT NULL REFERENCES clientes(id),
-                        observacao TEXT NOT NULL,
-                        categoria TEXT NOT NULL,
-                        status TEXT NOT NULL DEFAULT 'Aberto',
-                        responsabilidade TEXT NOT NULL DEFAULT 'Interna',
-                        responsavel TEXT NOT NULL,
-                        descricao TEXT,
-                        resolucao TEXT,
-                        data_abertura DATE NOT NULL,
-                        data_resolucao DATE,
-                        criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                # copiar dados de titulo -> observacao
-                conn.execute(
-                    "INSERT INTO chamados_new (id, cliente_id, observacao, categoria, status, responsabilidade, responsavel, descricao, resolucao, data_abertura, data_resolucao, criado_em, atualizado_em) "
-                    "SELECT id, cliente_id, titulo, categoria, status, responsabilidade, responsavel, descricao, resolucao, data_abertura, data_resolucao, criado_em, atualizado_em FROM chamados"
-                )
-                conn.execute("DROP TABLE chamados")
-                conn.execute("ALTER TABLE chamados_new RENAME TO chamados")
-        except Exception:
-            pass
+        # Migração: renomear coluna 'titulo' para 'observacao' em chamados se necessário
+        obs = _exec(
+            conn,
+            """SELECT column_name FROM information_schema.columns
+               WHERE table_name = 'chamados' AND column_name = 'observacao'"""
+        )
+        tit = _exec(
+            conn,
+            """SELECT column_name FROM information_schema.columns
+               WHERE table_name = 'chamados' AND column_name = 'titulo'"""
+        )
+        if not obs.fetchone() and tit.fetchone():
+            _exec(conn, "ALTER TABLE chamados RENAME COLUMN titulo TO observacao")
 
 
 # ─── CLIENTES ────────────────────────────────────────────────────────────────
@@ -85,22 +77,24 @@ def init_db():
 def listar_clientes(apenas_ativos: bool = True):
     with get_db() as conn:
         if apenas_ativos:
-            return conn.execute(
-                "SELECT * FROM clientes WHERE ativo=1 ORDER BY nome"
-            ).fetchall()
-        return conn.execute("SELECT * FROM clientes ORDER BY nome").fetchall()
+            cur = _exec(conn, "SELECT * FROM clientes WHERE ativo=1 ORDER BY nome")
+        else:
+            cur = _exec(conn, "SELECT * FROM clientes ORDER BY nome")
+        return cur.fetchall()
 
 
 def adicionar_cliente(nome: str, responsavel: str, status_implantacao: str = "3. Novo cliente sem integração") -> int:
     with get_db() as conn:
-        cur = conn.execute(
-            "INSERT INTO clientes (nome, responsavel, status_implantacao) VALUES (?, ?, ?)",
+        cur = _exec(
+            conn,
+            "INSERT INTO clientes (nome, responsavel, status_implantacao) VALUES (%s, %s, %s) RETURNING id",
             (nome.strip(), responsavel, status_implantacao),
         )
-        cliente_id = cur.lastrowid
+        cliente_id = cur.fetchone()["id"]
         for modulo in MODULOS_CHECKLIST:
-            conn.execute(
-                "INSERT OR IGNORE INTO checklist (cliente_id, modulo, status) VALUES (?, ?, 'ok')",
+            _exec(
+                conn,
+                "INSERT INTO checklist (cliente_id, modulo, status) VALUES (%s, %s, 'ok') ON CONFLICT DO NOTHING",
                 (cliente_id, modulo),
             )
         return cliente_id
@@ -108,15 +102,16 @@ def adicionar_cliente(nome: str, responsavel: str, status_implantacao: str = "3.
 
 def atualizar_cliente(cliente_id: int, nome: str, responsavel: str, status_implantacao: str = "3. Novo cliente sem integração"):
     with get_db() as conn:
-        conn.execute(
-            "UPDATE clientes SET nome=?, responsavel=?, status_implantacao=?, atualizado_em=CURRENT_TIMESTAMP WHERE id=?",
+        _exec(
+            conn,
+            "UPDATE clientes SET nome=%s, responsavel=%s, status_implantacao=%s, atualizado_em=CURRENT_TIMESTAMP WHERE id=%s",
             (nome.strip(), responsavel, status_implantacao, cliente_id),
         )
 
 
 def excluir_cliente(cliente_id: int):
     with get_db() as conn:
-        conn.execute("UPDATE clientes SET ativo=0 WHERE id=?", (cliente_id,))
+        _exec(conn, "UPDATE clientes SET ativo=0 WHERE id=%s", (cliente_id,))
 
 
 # ─── CHAMADOS ────────────────────────────────────────────────────────────────
@@ -132,59 +127,67 @@ def adicionar_chamado(
     data_abertura,
 ) -> int:
     with get_db() as conn:
-        cur = conn.execute(
+        cur = _exec(
+            conn,
             """INSERT INTO chamados
                (cliente_id, observacao, categoria, status, responsabilidade, responsavel, descricao, data_abertura)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
             (cliente_id, titulo.strip(), categoria, status, responsabilidade, responsavel,
              descricao, str(data_abertura)),
         )
-        return cur.lastrowid
+        return cur.fetchone()["id"]
 
 
 def listar_chamados_abertos():
     with get_db() as conn:
-        return conn.execute(
+        cur = _exec(
+            conn,
             """SELECT ch.*, cl.nome AS cliente_nome, cl.responsavel AS cliente_responsavel
                , ch.observacao AS titulo
                FROM chamados ch
                JOIN clientes cl ON cl.id = ch.cliente_id
                WHERE ch.status != 'Resolvido'
                ORDER BY ch.data_abertura ASC"""
-        ).fetchall()
+        )
+        return cur.fetchall()
 
 
 def listar_chamados_resolvidos():
     with get_db() as conn:
-        return conn.execute(
+        cur = _exec(
+            conn,
             """SELECT ch.*, cl.nome AS cliente_nome, cl.responsavel AS cliente_responsavel
                , ch.observacao AS titulo
                FROM chamados ch
                JOIN clientes cl ON cl.id = ch.cliente_id
                WHERE ch.status = 'Resolvido'
                ORDER BY ch.data_resolucao DESC"""
-        ).fetchall()
+        )
+        return cur.fetchall()
 
 
 def listar_todos_chamados():
     with get_db() as conn:
-        return conn.execute(
+        cur = _exec(
+            conn,
             """SELECT ch.*, cl.nome AS cliente_nome, cl.responsavel AS cliente_responsavel
                , ch.observacao AS titulo
                FROM chamados ch
                JOIN clientes cl ON cl.id = ch.cliente_id
                ORDER BY ch.data_abertura DESC"""
-        ).fetchall()
+        )
+        return cur.fetchall()
 
 
 def atualizar_chamado(chamado_id: int, **campos):
     if not campos:
         return
-    sets = ", ".join(f"{k}=?" for k in campos)
+    sets = ", ".join(f"{k}=%s" for k in campos)
     vals = list(campos.values()) + [chamado_id]
     with get_db() as conn:
-        conn.execute(
-            f"UPDATE chamados SET {sets}, atualizado_em=CURRENT_TIMESTAMP WHERE id=?",
+        _exec(
+            conn,
+            f"UPDATE chamados SET {sets}, atualizado_em=CURRENT_TIMESTAMP WHERE id=%s",
             vals,
         )
 
@@ -192,55 +195,63 @@ def atualizar_chamado(chamado_id: int, **campos):
 def resolver_chamado(chamado_id: int, resolucao: str, data_resolucao=None):
     dr = str(data_resolucao or date.today())
     with get_db() as conn:
-        conn.execute(
+        _exec(
+            conn,
             """UPDATE chamados
-               SET status='Resolvido', resolucao=?, data_resolucao=?, atualizado_em=CURRENT_TIMESTAMP
-               WHERE id=?""",
+               SET status='Resolvido', resolucao=%s, data_resolucao=%s, atualizado_em=CURRENT_TIMESTAMP
+               WHERE id=%s""",
             (resolucao, dr, chamado_id),
         )
 
 
 def excluir_chamado(chamado_id: int):
     with get_db() as conn:
-        conn.execute("DELETE FROM chamados WHERE id=?", (chamado_id,))
+        _exec(conn, "DELETE FROM chamados WHERE id=%s", (chamado_id,))
 
 
 def obter_estatisticas():
     with get_db() as conn:
-        total_abertos = conn.execute(
-            "SELECT COUNT(*) FROM chamados WHERE status != 'Resolvido'"
-        ).fetchone()[0]
+        total_abertos = _exec(
+            conn, "SELECT COUNT(*) AS n FROM chamados WHERE status != 'Resolvido'"
+        ).fetchone()["n"]
 
-        aguardando_cliente = conn.execute(
-            "SELECT COUNT(*) FROM chamados WHERE status = 'Aguardando cliente'"
-        ).fetchone()[0]
+        aguardando_cliente = _exec(
+            conn, "SELECT COUNT(*) AS n FROM chamados WHERE status = 'Aguardando cliente'"
+        ).fetchone()["n"]
 
-        resolvidos_30d = conn.execute(
-            """SELECT COUNT(*) FROM chamados
+        resolvidos_30d = _exec(
+            conn,
+            """SELECT COUNT(*) AS n FROM chamados
                WHERE status = 'Resolvido'
-               AND data_resolucao >= date('now', '-30 days')"""
-        ).fetchone()[0]
+               AND data_resolucao >= CURRENT_DATE - INTERVAL '30 days'"""
+        ).fetchone()["n"]
 
-        total_geral = conn.execute("SELECT COUNT(*) FROM chamados").fetchone()[0]
-        total_resolvidos = conn.execute(
-            "SELECT COUNT(*) FROM chamados WHERE status = 'Resolvido'"
-        ).fetchone()[0]
+        total_geral = _exec(
+            conn, "SELECT COUNT(*) AS n FROM chamados"
+        ).fetchone()["n"]
+
+        total_resolvidos = _exec(
+            conn, "SELECT COUNT(*) AS n FROM chamados WHERE status = 'Resolvido'"
+        ).fetchone()["n"]
 
         taxa = round((total_resolvidos / total_geral * 100) if total_geral > 0 else 0, 1)
 
-        por_categoria = conn.execute(
-            """SELECT categoria, COUNT(*) as total
+        por_categoria = _exec(
+            conn,
+            """SELECT categoria, COUNT(*) AS total
                FROM chamados WHERE status != 'Resolvido'
                GROUP BY categoria ORDER BY total DESC"""
         ).fetchall()
 
-        por_responsavel = conn.execute(
-            """SELECT responsavel, COUNT(*) as total
+        por_responsavel = _exec(
+            conn,
+            """SELECT responsavel, COUNT(*) AS total
                FROM chamados WHERE status != 'Resolvido'
                GROUP BY responsavel ORDER BY total DESC"""
         ).fetchall()
 
-        por_cliente = conn.execute(
+        por_cliente = _exec(
+            conn,
             """SELECT cl.nome AS cliente,
                        SUM(CASE WHEN ch.status != 'Resolvido' THEN 1 ELSE 0 END) AS abertos,
                        SUM(CASE WHEN ch.status = 'Resolvido' THEN 1 ELSE 0 END) AS resolvidos
@@ -251,7 +262,8 @@ def obter_estatisticas():
                          SUM(CASE WHEN ch.status = 'Resolvido' THEN 1 ELSE 0 END)) DESC"""
         ).fetchall()
 
-        mais_antigos = conn.execute(
+        mais_antigos = _exec(
+            conn,
             """SELECT ch.id, ch.observacao AS titulo, ch.data_abertura, ch.status, ch.categoria,
                       ch.responsabilidade, ch.responsavel,
                       cl.nome AS cliente_nome,
@@ -262,11 +274,12 @@ def obter_estatisticas():
                ORDER BY ch.data_abertura ASC"""
         ).fetchall()
 
-        cobrancas_sem_resposta = conn.execute(
-            """SELECT COUNT(*) FROM cobrancas
+        cobrancas_sem_resposta = _exec(
+            conn,
+            """SELECT COUNT(*) AS n FROM cobrancas
                WHERE respondido = 0
-               AND date(data_envio) <= date('now', '-3 days')"""
-        ).fetchone()[0]
+               AND data_envio::date <= CURRENT_DATE - INTERVAL '3 days'"""
+        ).fetchone()["n"]
 
         return {
             "total_abertos": total_abertos,
@@ -285,48 +298,54 @@ def obter_estatisticas():
 
 def adicionar_cobranca(chamado_id: int, mensagem: str, data_envio) -> int:
     with get_db() as conn:
-        cur = conn.execute(
-            "INSERT INTO cobrancas (chamado_id, mensagem, data_envio) VALUES (?, ?, ?)",
+        cur = _exec(
+            conn,
+            "INSERT INTO cobrancas (chamado_id, mensagem, data_envio) VALUES (%s, %s, %s) RETURNING id",
             (chamado_id, mensagem.strip(), str(data_envio)),
         )
-        # Atualiza status do chamado para "Aguardando cliente"
-        conn.execute(
-            "UPDATE chamados SET status='Aguardando cliente', atualizado_em=CURRENT_TIMESTAMP WHERE id=?",
+        cobranca_id = cur.fetchone()["id"]
+        _exec(
+            conn,
+            "UPDATE chamados SET status='Aguardando cliente', atualizado_em=CURRENT_TIMESTAMP WHERE id=%s",
             (chamado_id,),
         )
-        return cur.lastrowid
+        return cobranca_id
 
 
 def listar_cobrancas_por_chamado(chamado_id: int):
     with get_db() as conn:
-        return conn.execute(
-            "SELECT * FROM cobrancas WHERE chamado_id=? ORDER BY data_envio ASC",
+        cur = _exec(
+            conn,
+            "SELECT * FROM cobrancas WHERE chamado_id=%s ORDER BY data_envio ASC",
             (chamado_id,),
-        ).fetchall()
+        )
+        return cur.fetchall()
 
 
 def marcar_respondido(cobranca_id: int, resposta: str, data_resposta=None):
     dr = str(data_resposta or date.today())
     with get_db() as conn:
-        conn.execute(
+        _exec(
+            conn,
             """UPDATE cobrancas
-               SET respondido=1, resposta_cliente=?, data_resposta=?
-               WHERE id=?""",
+               SET respondido=1, resposta_cliente=%s, data_resposta=%s
+               WHERE id=%s""",
             (resposta.strip(), dr, cobranca_id),
         )
-        # Atualiza status do chamado para "Respondido"
-        chamado_id = conn.execute(
-            "SELECT chamado_id FROM cobrancas WHERE id=?", (cobranca_id,)
-        ).fetchone()["chamado_id"]
-        conn.execute(
-            "UPDATE chamados SET status='Respondido', atualizado_em=CURRENT_TIMESTAMP WHERE id=?",
+        row = _exec(
+            conn, "SELECT chamado_id FROM cobrancas WHERE id=%s", (cobranca_id,)
+        ).fetchone()
+        chamado_id = row["chamado_id"]
+        _exec(
+            conn,
+            "UPDATE chamados SET status='Respondido', atualizado_em=CURRENT_TIMESTAMP WHERE id=%s",
             (chamado_id,),
         )
 
 
 def excluir_cobranca(cobranca_id: int):
     with get_db() as conn:
-        conn.execute("DELETE FROM cobrancas WHERE id=?", (cobranca_id,))
+        _exec(conn, "DELETE FROM cobrancas WHERE id=%s", (cobranca_id,))
 
 
 def listar_todas_cobrancas(apenas_pendentes: bool = False, cliente_id: int = None):
@@ -337,7 +356,7 @@ def listar_todas_cobrancas(apenas_pendentes: bool = False, cliente_id: int = Non
         where.append("cob.respondido = 0")
 
     if cliente_id:
-        where.append("cl.id = ?")
+        where.append("cl.id = %s")
         params.append(cliente_id)
 
     clausula = f"WHERE {' AND '.join(where)}" if where else ""
@@ -358,7 +377,7 @@ def listar_todas_cobrancas(apenas_pendentes: bool = False, cliente_id: int = Non
             cl.id            AS cliente_id,
             cl.nome          AS cliente_nome,
             cl.responsavel   AS cliente_responsavel,
-            julianday('now') - julianday(cob.data_envio) AS dias_aguardando
+            (CURRENT_DATE - cob.data_envio::date) AS dias_aguardando
         FROM cobrancas cob
         JOIN chamados ch ON ch.id = cob.chamado_id
         JOIN clientes cl ON cl.id = ch.cliente_id
@@ -366,29 +385,33 @@ def listar_todas_cobrancas(apenas_pendentes: bool = False, cliente_id: int = Non
         ORDER BY cob.respondido ASC, cob.data_envio ASC
     """
     with get_db() as conn:
-        return conn.execute(sql, params).fetchall()
+        cur = _exec(conn, sql, params if params else None)
+        return cur.fetchall()
 
 
 # ─── CHECKLIST ───────────────────────────────────────────────────────────────
 
 def obter_checklist_completo():
     with get_db() as conn:
-        return conn.execute(
+        cur = _exec(
+            conn,
             """SELECT ck.*, cl.nome AS cliente_nome, cl.responsavel AS cliente_responsavel,
                       cl.status_implantacao AS cliente_status_implantacao
                FROM checklist ck
                JOIN clientes cl ON cl.id = ck.cliente_id
                WHERE cl.ativo = 1
                ORDER BY cl.nome, ck.modulo"""
-        ).fetchall()
+        )
+        return cur.fetchall()
 
 
 def atualizar_status_modulo(cliente_id: int, modulo: str, status: str, chamado_id=None):
     with get_db() as conn:
-        conn.execute(
+        _exec(
+            conn,
             """UPDATE checklist
-               SET status=?, chamado_id=?, atualizado_em=CURRENT_TIMESTAMP
-               WHERE cliente_id=? AND modulo=?""",
+               SET status=%s, chamado_id=%s, atualizado_em=CURRENT_TIMESTAMP
+               WHERE cliente_id=%s AND modulo=%s""",
             (status, chamado_id, cliente_id, modulo),
         )
 
@@ -398,28 +421,29 @@ def obter_historico(data_inicio=None, data_fim=None, responsavel=None,
     where = ["ch.status = 'Resolvido'"]
     params = []
     if data_inicio:
-        where.append("ch.data_resolucao >= ?")
+        where.append("ch.data_resolucao >= %s")
         params.append(str(data_inicio))
     if data_fim:
-        where.append("ch.data_resolucao <= ?")
+        where.append("ch.data_resolucao <= %s")
         params.append(str(data_fim))
     if responsavel and responsavel != "Todos":
-        where.append("ch.responsavel = ?")
+        where.append("ch.responsavel = %s")
         params.append(responsavel)
     if categoria and categoria != "Todas":
-        where.append("ch.categoria = ?")
+        where.append("ch.categoria = %s")
         params.append(categoria)
     if responsabilidade and responsabilidade != "Todas":
-        where.append("ch.responsabilidade = ?")
+        where.append("ch.responsabilidade = %s")
         params.append(responsabilidade)
 
     sql = f"""
         SELECT ch.*, ch.observacao AS titulo, cl.nome AS cliente_nome,
-               julianday(ch.data_resolucao) - julianday(ch.data_abertura) AS dias_resolucao
+               (ch.data_resolucao::date - ch.data_abertura::date) AS dias_resolucao
         FROM chamados ch
         JOIN clientes cl ON cl.id = ch.cliente_id
         WHERE {' AND '.join(where)}
         ORDER BY ch.data_resolucao DESC
     """
     with get_db() as conn:
-        return conn.execute(sql, params).fetchall()
+        cur = _exec(conn, sql, params if params else None)
+        return cur.fetchall()

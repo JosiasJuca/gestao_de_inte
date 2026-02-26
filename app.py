@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import streamlit as st
 from src.database.operations import init_db, obter_estatisticas
 from src.utils.constants import CSS_STYLES
