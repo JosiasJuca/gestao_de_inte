@@ -96,7 +96,7 @@ def importar(source_path, dry_run=False):
                 cliente_map[cliente_nome] = target_cliente_id
 
         titulo = row_get(r, 'titulo') or ''
-        categoria = row_get(r, 'categoria') or 'Geral'
+        categoria = row_get(r, 'categoria') or ''
         status = row_get(r, 'status') or 'Aberto'
         responsabilidade = row_get(r, 'responsabilidade') or 'Interna'
         responsavel = row_get(r, 'responsavel') or ''

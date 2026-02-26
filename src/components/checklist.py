@@ -98,7 +98,7 @@ def renderizar_checklist():
     with col_f2:
         filtro_status = st.selectbox(
             "Mostrar",
-            ["Todos", "Com problemas", "Com pendências (não ok)"],
+            ["Todos", "Com problemas", "Com pendências (não ok)", "Em construção"],
             key="checklist_filtro_status",
         )
 
@@ -133,6 +133,11 @@ def renderizar_checklist():
         dados = {
             k: v for k, v in dados.items()
             if any(m.get("status") != "ok" for m in v["modulos"].values())
+        }
+    elif filtro_status == "Em construção":
+        dados = {
+            k: v for k, v in dados.items()
+            if any(m.get("status") == "construcao" for m in v["modulos"].values())
         }
 
     if not dados:
