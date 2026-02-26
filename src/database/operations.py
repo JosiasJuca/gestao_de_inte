@@ -221,85 +221,77 @@ def excluir_chamado(chamado_id: int):
 
 def obter_estatisticas():
     with get_db() as conn:
-        total_abertos = _exec(
-            conn, "SELECT COUNT(*) AS n FROM chamados WHERE status != 'Resolvido'"
-        ).fetchone()["n"]
+        # Query 1: todos os contadores em uma única passagem pela tabela
+        kpis = _exec(conn, """
+            SELECT
+                COUNT(*) FILTER (WHERE status != 'Resolvido')                                          AS total_abertos,
+                COUNT(*) FILTER (WHERE status = 'Aguardando cliente')                                  AS aguardando_cliente,
+                COUNT(*) FILTER (WHERE status = 'Resolvido' AND data_resolucao >= CURRENT_DATE - INTERVAL '30 days') AS resolvidos_30d,
+                COUNT(*)                                                                                AS total_geral,
+                COUNT(*) FILTER (WHERE status = 'Resolvido')                                           AS total_resolvidos
+            FROM chamados
+        """).fetchone()
 
-        aguardando_cliente = _exec(
-            conn, "SELECT COUNT(*) AS n FROM chamados WHERE status = 'Aguardando cliente'"
-        ).fetchone()["n"]
-
-        resolvidos_30d = _exec(
-            conn,
-            """SELECT COUNT(*) AS n FROM chamados
-               WHERE status = 'Resolvido'
-               AND data_resolucao >= CURRENT_DATE - INTERVAL '30 days'"""
-        ).fetchone()["n"]
-
-        total_geral = _exec(
-            conn, "SELECT COUNT(*) AS n FROM chamados"
-        ).fetchone()["n"]
-
-        total_resolvidos = _exec(
-            conn, "SELECT COUNT(*) AS n FROM chamados WHERE status = 'Resolvido'"
-        ).fetchone()["n"]
-
+        total_geral     = kpis["total_geral"]
+        total_resolvidos = kpis["total_resolvidos"]
         taxa = round((total_resolvidos / total_geral * 100) if total_geral > 0 else 0, 1)
 
-        por_categoria = _exec(
-            conn,
-            """SELECT categoria, COUNT(*) AS total
-               FROM chamados WHERE status != 'Resolvido'
-               GROUP BY categoria ORDER BY total DESC"""
-        ).fetchall()
+        # Query 2: agrupamentos por categoria, responsável e cliente em uma única passagem
+        rows = _exec(conn, """
+            SELECT
+                ch.categoria,
+                ch.responsavel,
+                cl.nome AS cliente,
+                ch.status
+            FROM chamados ch
+            JOIN clientes cl ON cl.id = ch.cliente_id
+        """).fetchall()
 
-        por_responsavel = _exec(
-            conn,
-            """SELECT responsavel, COUNT(*) AS total
-               FROM chamados WHERE status != 'Resolvido'
-               GROUP BY responsavel ORDER BY total DESC"""
-        ).fetchall()
+        from collections import defaultdict
+        cat_map  = defaultdict(int)
+        resp_map = defaultdict(int)
+        cli_map  = defaultdict(lambda: {"abertos": 0, "resolvidos": 0})
 
-        por_cliente = _exec(
-            conn,
-            """SELECT cl.nome AS cliente,
-                       SUM(CASE WHEN ch.status != 'Resolvido' THEN 1 ELSE 0 END) AS abertos,
-                       SUM(CASE WHEN ch.status = 'Resolvido' THEN 1 ELSE 0 END) AS resolvidos
-               FROM chamados ch
-               JOIN clientes cl ON cl.id = ch.cliente_id
-               GROUP BY cl.nome
-               ORDER BY (SUM(CASE WHEN ch.status != 'Resolvido' THEN 1 ELSE 0 END) +
-                         SUM(CASE WHEN ch.status = 'Resolvido' THEN 1 ELSE 0 END)) DESC"""
-        ).fetchall()
+        for r in rows:
+            if r["status"] != "Resolvido":
+                cat_map[r["categoria"]] += 1
+                resp_map[r["responsavel"]] += 1
+                cli_map[r["cliente"]]["abertos"] += 1
+            else:
+                cli_map[r["cliente"]]["resolvidos"] += 1
 
-        mais_antigos = _exec(
-            conn,
-            """SELECT ch.id, ch.observacao AS titulo, ch.data_abertura, ch.status, ch.categoria,
-                      ch.responsabilidade, ch.responsavel,
-                      cl.nome AS cliente_nome,
-                      cl.status_implantacao AS cliente_status_implantacao
-               FROM chamados ch
-               JOIN clientes cl ON cl.id = ch.cliente_id
-               WHERE ch.status != 'Resolvido'
-               ORDER BY ch.data_abertura ASC"""
-        ).fetchall()
+        por_categoria  = sorted([{"categoria": k, "total": v} for k, v in cat_map.items()],  key=lambda x: -x["total"])
+        por_responsavel = sorted([{"responsavel": k, "total": v} for k, v in resp_map.items()], key=lambda x: -x["total"])
+        por_cliente    = sorted([{"cliente": k, **v} for k, v in cli_map.items()],             key=lambda x: -(x["abertos"] + x["resolvidos"]))
 
-        cobrancas_sem_resposta = _exec(
-            conn,
-            """SELECT COUNT(*) AS n FROM cobrancas
-               WHERE respondido = 0
-               AND data_envio::date <= CURRENT_DATE - INTERVAL '3 days'"""
-        ).fetchone()["n"]
+        # Query 3: chamados abertos mais antigos (precisa de dados detalhados)
+        mais_antigos = _exec(conn, """
+            SELECT ch.id, ch.observacao AS titulo, ch.data_abertura, ch.status, ch.categoria,
+                   ch.responsabilidade, ch.responsavel,
+                   cl.nome AS cliente_nome,
+                   cl.status_implantacao AS cliente_status_implantacao
+            FROM chamados ch
+            JOIN clientes cl ON cl.id = ch.cliente_id
+            WHERE ch.status != 'Resolvido'
+            ORDER BY ch.data_abertura ASC
+        """).fetchall()
+
+        # Query 4: cobranças atrasadas
+        cobrancas_sem_resposta = _exec(conn, """
+            SELECT COUNT(*) AS n FROM cobrancas
+            WHERE respondido = 0
+            AND data_envio::date <= CURRENT_DATE - INTERVAL '3 days'
+        """).fetchone()["n"]
 
         return {
-            "total_abertos": total_abertos,
-            "aguardando_cliente": aguardando_cliente,
-            "resolvidos_30d": resolvidos_30d,
-            "taxa_resolucao": taxa,
-            "por_categoria": [dict(r) for r in por_categoria],
-            "por_responsavel": [dict(r) for r in por_responsavel],
-            "por_cliente": [dict(r) for r in por_cliente],
-            "mais_antigos": [dict(r) for r in mais_antigos],
+            "total_abertos":         kpis["total_abertos"],
+            "aguardando_cliente":    kpis["aguardando_cliente"],
+            "resolvidos_30d":        kpis["resolvidos_30d"],
+            "taxa_resolucao":        taxa,
+            "por_categoria":         por_categoria,
+            "por_responsavel":       por_responsavel,
+            "por_cliente":           por_cliente,
+            "mais_antigos":          [dict(r) for r in mais_antigos],
             "cobrancas_sem_resposta": cobrancas_sem_resposta,
         }
 
