@@ -52,14 +52,16 @@ TABS_SPACING_CSS = """
 st.markdown(CSS_STYLES, unsafe_allow_html=True)
 st.markdown(TABS_SPACING_CSS, unsafe_allow_html=True)
 
-init_db()
+if "db_initialized" not in st.session_state:
+    init_db()
+    st.session_state["db_initialized"] = True
 
 # ─── SIDEBAR ──────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("Gestão de Integrações")
     st.markdown("---")
 
-    # Métricas rápidas
+    # Métricas rápidas (reutiliza o cache de obter_estatisticas, sem query extra)
     try:
         stats = obter_estatisticas()
         col1, col2 = st.columns(2)
