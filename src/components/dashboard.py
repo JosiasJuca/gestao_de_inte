@@ -46,8 +46,8 @@ def _renderizar_grafico_categorias(stats):
         st.info("Sem dados por categoria.")
         return
 
-    labels = [d["categoria"] for d in dados]
-    values = [d["total"] for d in dados]
+    labels = [d["categoria"] for d in dados if d["total"] > 0]
+    values = [d["total"] for d in dados if d["total"] > 0]
 
     fig = go.Figure(data=[go.Pie(
         labels=labels,
@@ -59,18 +59,9 @@ def _renderizar_grafico_categorias(stats):
     )])
     fig.update_layout(
         title="Chamados abertos por categoria",
-        showlegend=True,
+        showlegend=False,
         height=320,
-        margin=dict(t=40, b=10, l=10, r=160),
-        legend=dict(
-            orientation="v",
-            x=1.02,
-            y=0.5,
-            xanchor="left",
-            yanchor="middle",
-            borderwidth=0,
-            bgcolor='rgba(0,0,0,0)'
-        ),
+        margin=dict(t=40, b=10, l=10, r=10),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)'
     )
@@ -93,6 +84,8 @@ def _renderizar_grafico_clientes(stats):
             y=abertos,
             name="Abertos",
             marker_color="#0d6efd",
+            text=[v if v > 0 else "" for v in abertos],
+            textposition="outside",
             hovertemplate="%{x}: %{y} aberto(s)<extra></extra>",
         )
     )
@@ -102,6 +95,8 @@ def _renderizar_grafico_clientes(stats):
             y=resolvidos,
             name="Resolvidos",
             marker_color="#198754",
+            text=[v if v > 0 else "" for v in resolvidos],
+            textposition="outside",
             hovertemplate="%{x}: %{y} resolvido(s)<extra></extra>",
         )
     )
@@ -109,9 +104,12 @@ def _renderizar_grafico_clientes(stats):
     fig.update_layout(
         title="Chamados por cliente",
         barmode="group",
-        height=260,
+        height=300,
         margin=dict(t=40, b=10, l=10, r=10),
         xaxis_tickangle=-45,
+        yaxis=dict(visible=False),
+        uniformtext_minsize=8,
+        uniformtext_mode="hide",
     )
     st.plotly_chart(fig, use_container_width=True)
 
