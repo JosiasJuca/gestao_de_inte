@@ -12,7 +12,7 @@ CORES_STATUS_IMPLANTACAO = {
     "4. Implantado sem integração":  "#e6a817",
 }
 
-STATUS_CHAMADO = ["Aberto", "Em análise", "Aguardando cliente", "Respondido", "Resolvido"]
+STATUS_CHAMADO = ["Aberto", "Em análise", "Aguardando cliente", "Respondido - Em andamento", "Resolvido"]
 
 CATEGORIAS = ["Batida", "Escala", "Feriados", "Funcionários", "PDV", "Venda", "SSO"]
 
@@ -28,7 +28,7 @@ CORES_STATUS = {
     "Aberto": "#6c757d",
     "Em análise": "#0d6efd",
     "Aguardando cliente": "#e6a817",
-    "Respondido": "#198754",
+    "Respondido - Em andamento": "#6f42c1",
     "Resolvido": "#20c997",
 }
 

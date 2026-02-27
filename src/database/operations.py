@@ -67,6 +67,12 @@ def init_db():
             "WHERE status_implantacao = 'Novo cliente'"
         )
 
+        # Migração: renomear status 'Respondido' para 'Respondido - Em andamento'
+        _exec(
+            conn,
+            "UPDATE chamados SET status = 'Respondido - Em andamento' WHERE status = 'Respondido'"
+        )
+
         # Migração: renomear coluna 'titulo' para 'observacao' em chamados se necessário
         obs = _exec(
             conn,
@@ -333,6 +339,13 @@ def listar_cobrancas_por_chamado(chamado_id: int):
 def marcar_respondido(cobranca_id: int, resposta: str, data_resposta=None):
     dr = str(data_resposta or date.today())
     with get_db() as conn:
+        # Busca o chamado_id desta cobrança
+        row = _exec(
+            conn, "SELECT chamado_id FROM cobrancas WHERE id=%s", (cobranca_id,)
+        ).fetchone()
+        chamado_id = row["chamado_id"]
+
+        # Marca a cobrança respondida
         _exec(
             conn,
             """UPDATE cobrancas
@@ -340,13 +353,19 @@ def marcar_respondido(cobranca_id: int, resposta: str, data_resposta=None):
                WHERE id=%s""",
             (resposta.strip(), dr, cobranca_id),
         )
-        row = _exec(
-            conn, "SELECT chamado_id FROM cobrancas WHERE id=%s", (cobranca_id,)
-        ).fetchone()
-        chamado_id = row["chamado_id"]
+
+        # Marca todas as cobranças pendentes do mesmo chamado como respondidas também
         _exec(
             conn,
-            "UPDATE chamados SET status='Respondido', atualizado_em=CURRENT_TIMESTAMP WHERE id=%s",
+            """UPDATE cobrancas
+               SET respondido=1, resposta_cliente=%s, data_resposta=%s
+               WHERE chamado_id=%s AND respondido=0""",
+            (resposta.strip(), dr, chamado_id),
+        )
+
+        _exec(
+            conn,
+            "UPDATE chamados SET status='Respondido - Em andamento', atualizado_em=CURRENT_TIMESTAMP WHERE id=%s",
             (chamado_id,),
         )
 
