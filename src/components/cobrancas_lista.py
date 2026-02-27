@@ -55,19 +55,6 @@ def renderizar_cobrancas_lista():
     with c4:
         st.metric("Respondidas", len(respondidas))
 
-    # ── Alertas ───────────────────────────────────────────────────────────────
-    if atrasadas:
-        st.markdown("---")
-        st.error(f"⚠️ **{len(atrasadas)} cobrança(s) sem resposta há mais de 3 dias:**")
-        for cob in atrasadas:
-            dias = int(cob["dias_aguardando"] or 0)
-            st.markdown(
-                f"- **{cob['cliente_nome']}** — #{cob['chamado_id']} {cob['chamado_titulo']} "
-                f"— enviada em {formatar_data_br(cob['data_envio'])} "
-                f'(<span class="dias-alerta">{dias} dias</span>)',
-                unsafe_allow_html=True,
-            )
-
     st.markdown("---")
 
     # ── Filtros ───────────────────────────────────────────────────────────────
@@ -164,19 +151,32 @@ def _renderizar_bloco_cliente(cid, cli):
             f'padding:2px 10px;border-radius:10px;margin-left:6px">⏳ {n_pendentes} pendente(s)</span>'
         )
 
-    st.markdown(
-        f'<div style="background:#e8eaf6;border-left:4px solid #3f51b5;padding:10px 16px;'
-        f'border-radius:8px;margin-top:20px;margin-bottom:10px;display:flex;align-items:center;gap:10px">'
-        f'<strong style="font-size:15px;color:#1a1a2e">👤 {cli["nome"]}</strong>'
-        f'&nbsp;{badge_total}{badge_status}'
-        f'<span style="margin-left:auto;font-size:12px;color:#555">{cli["responsavel"]}</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+    chave_exp = f"cob_cli_exp_{cid}"
+    expandido = st.session_state.get(chave_exp, True)
+    icone_toggle = "▲" if expandido else "▼"
 
-    for chid in cli["chamados_order"]:
-        ch = cli["chamados"][chid]
-        _renderizar_bloco_chamado(chid, ch)
+    col_hdr, col_btn = st.columns([11, 1])
+    with col_hdr:
+        st.markdown(
+            f'<div style="background:#e8eaf6;border-left:4px solid #3f51b5;padding:10px 16px;'
+            f'border-radius:8px;margin-top:20px;margin-bottom:4px;display:flex;align-items:center;gap:10px">'
+            f'<strong style="font-size:15px;color:#1a1a2e">👤 {cli["nome"]}</strong>'
+            f'&nbsp;{badge_total}{badge_status}'
+            f'<span style="margin-left:auto;font-size:12px;color:#555">{cli["responsavel"]}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    with col_btn:
+        st.markdown("<div style='margin-top:22px'>", unsafe_allow_html=True)
+        if st.button(icone_toggle, key=f"toggle_cli_{cid}", use_container_width=True, help="Expandir/Recolher"):
+            st.session_state[chave_exp] = not expandido
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    if expandido:
+        for chid in cli["chamados_order"]:
+            ch = cli["chamados"][chid]
+            _renderizar_bloco_chamado(chid, ch)
 
 
 def _renderizar_bloco_chamado(chid, ch):
@@ -198,19 +198,24 @@ def _renderizar_bloco_chamado(chid, ch):
         unsafe_allow_html=True,
     )
 
+    tem_respondida = any(c["respondido"] for c in ch["cobrancas"])
     for i, cob in enumerate(ch["cobrancas"], 1):
-        _renderizar_item_cobranca(cob, i, n)
+        _renderizar_item_cobranca(cob, i, n, tem_respondida)
 
 
-def _renderizar_item_cobranca(cob, num, total):
+def _renderizar_item_cobranca(cob, num, total, tem_respondida=False):
     respondido = bool(cob["respondido"])
     dias = int(cob["dias_aguardando"] or 0)
-    atrasado = not respondido and dias > 3
+    atrasado = not respondido and dias > 3 and not tem_respondida
 
     if respondido:
         border_color = "#198754"
         estado = "✅ Respondida"
         bg_color = "#f8fffe"
+    elif tem_respondida:
+        border_color = "#adb5bd"
+        estado = "— Encerrada sem resposta individual"
+        bg_color = "#f8f9fa"
     elif atrasado:
         border_color = "#dc3545"
         estado = f"⚠️ Sem resposta há {dias} dias"
@@ -254,7 +259,7 @@ def _renderizar_item_cobranca(cob, num, total):
     with col_actions:
         # Alinha os botões verticalmente
         st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
-        if not respondido:
+        if not respondido and not tem_respondida:
             if st.button(
                 "✔ Respondido",
                 key=f"cob_resp_{cob['id']}",
@@ -269,7 +274,7 @@ def _renderizar_item_cobranca(cob, num, total):
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Formulário de resposta (fora dos columns para não quebrar layout)
-    if st.session_state.get(f"resp_form_{cob['id']}"):
+    if st.session_state.get(f"resp_form_{cob['id']}") and not tem_respondida:
         with st.form(f"form_resp_{cob['id']}"):
             st.markdown(
                 f"**Registrar resposta — {cob['cliente_nome']}** "
