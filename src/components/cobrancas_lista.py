@@ -151,29 +151,11 @@ def _renderizar_bloco_cliente(cid, cli):
             f'padding:2px 10px;border-radius:10px;margin-left:6px">⏳ {n_pendentes} pendente(s)</span>'
         )
 
-    chave_exp = f"cob_cli_exp_{cid}"
-    expandido = st.session_state.get(chave_exp, True)
-    icone_toggle = "▲" if expandido else "▼"
+    n_pendentes_txt = f" · {n_pendentes} pendente(s)" if n_pendentes else ""
+    status_txt = " · Respondido - Em andamento" if (total_cob - n_pendentes > 0 and n_pendentes > 0) else ""
+    label = f'👤 {cli["nome"]}  —  {cli["responsavel"]}  ·  {total_cob} cobrança(s){n_pendentes_txt}{status_txt}'
 
-    col_hdr, col_btn = st.columns([11, 1])
-    with col_hdr:
-        st.markdown(
-            f'<div style="background:#e8eaf6;border-left:4px solid #3f51b5;padding:10px 16px;'
-            f'border-radius:8px;margin-top:20px;margin-bottom:4px;display:flex;align-items:center;gap:10px">'
-            f'<strong style="font-size:15px;color:#1a1a2e">👤 {cli["nome"]}</strong>'
-            f'&nbsp;{badge_total}{badge_status}'
-            f'<span style="margin-left:auto;font-size:12px;color:#555">{cli["responsavel"]}</span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-    with col_btn:
-        st.markdown("<div style='margin-top:22px'>", unsafe_allow_html=True)
-        if st.button(icone_toggle, key=f"toggle_cli_{cid}", use_container_width=True, help="Expandir/Recolher"):
-            st.session_state[chave_exp] = not expandido
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    if expandido:
+    with st.expander(label, expanded=True):
         for chid in cli["chamados_order"]:
             ch = cli["chamados"][chid]
             _renderizar_bloco_chamado(chid, ch)
