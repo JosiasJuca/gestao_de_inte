@@ -10,6 +10,19 @@ from src.database.models import CRIAR_TABELAS, CRIAR_INDICES
 from src.utils.constants import MODULOS_CHECKLIST, CATEGORIAS
 
 
+def _invalidar_cache():
+    """Limpa o cache de todas as funções de leitura após uma escrita."""
+    listar_clientes.clear()
+    listar_chamados_abertos.clear()
+    listar_chamados_resolvidos.clear()
+    listar_todos_chamados.clear()
+    obter_estatisticas.clear()
+    obter_checklist_completo.clear()
+    listar_todas_cobrancas.clear()
+    listar_cobrancas_por_chamado.clear()
+    obter_historico.clear()
+
+
 @st.cache_resource
 def _get_pool():
     return psycopg2.pool.ThreadedConnectionPool(
@@ -90,6 +103,7 @@ def init_db():
 
 # ─── CLIENTES ────────────────────────────────────────────────────────────────
 
+@st.cache_data(ttl=30)
 def listar_clientes(apenas_ativos: bool = True):
     with get_db() as conn:
         if apenas_ativos:
@@ -113,7 +127,8 @@ def adicionar_cliente(nome: str, responsavel: str, status_implantacao: str = "3.
                 "INSERT INTO checklist (cliente_id, modulo, status) VALUES (%s, %s, 'ok') ON CONFLICT DO NOTHING",
                 (cliente_id, modulo),
             )
-        return cliente_id
+    _invalidar_cache()
+    return cliente_id
 
 
 def atualizar_cliente(cliente_id: int, nome: str, responsavel: str, status_implantacao: str = "3. Novo cliente sem integração"):
@@ -123,11 +138,13 @@ def atualizar_cliente(cliente_id: int, nome: str, responsavel: str, status_impla
             "UPDATE clientes SET nome=%s, responsavel=%s, status_implantacao=%s, atualizado_em=CURRENT_TIMESTAMP WHERE id=%s",
             (nome.strip(), responsavel, status_implantacao, cliente_id),
         )
+    _invalidar_cache()
 
 
 def excluir_cliente(cliente_id: int):
     with get_db() as conn:
         _exec(conn, "UPDATE clientes SET ativo=0 WHERE id=%s", (cliente_id,))
+    _invalidar_cache()
 
 
 # ─── CHAMADOS ────────────────────────────────────────────────────────────────
@@ -151,9 +168,12 @@ def adicionar_chamado(
             (cliente_id, titulo.strip(), categoria, status, responsabilidade, responsavel,
              descricao, str(data_abertura)),
         )
-        return cur.fetchone()["id"]
+        chamado_id = cur.fetchone()["id"]
+    _invalidar_cache()
+    return chamado_id
 
 
+@st.cache_data(ttl=30)
 def listar_chamados_abertos():
     with get_db() as conn:
         cur = _exec(
@@ -168,6 +188,7 @@ def listar_chamados_abertos():
         return cur.fetchall()
 
 
+@st.cache_data(ttl=30)
 def listar_chamados_resolvidos():
     with get_db() as conn:
         cur = _exec(
@@ -182,6 +203,7 @@ def listar_chamados_resolvidos():
         return cur.fetchall()
 
 
+@st.cache_data(ttl=30)
 def listar_todos_chamados():
     with get_db() as conn:
         cur = _exec(
@@ -206,6 +228,7 @@ def atualizar_chamado(chamado_id: int, **campos):
             f"UPDATE chamados SET {sets}, atualizado_em=CURRENT_TIMESTAMP WHERE id=%s",
             vals,
         )
+    _invalidar_cache()
 
 
 def resolver_chamado(chamado_id: int, resolucao: str, data_resolucao=None):
@@ -218,13 +241,16 @@ def resolver_chamado(chamado_id: int, resolucao: str, data_resolucao=None):
                WHERE id=%s""",
             (resolucao, dr, chamado_id),
         )
+    _invalidar_cache()
 
 
 def excluir_chamado(chamado_id: int):
     with get_db() as conn:
         _exec(conn, "DELETE FROM chamados WHERE id=%s", (chamado_id,))
+    _invalidar_cache()
 
 
+@st.cache_data(ttl=30)
 def obter_estatisticas():
     with get_db() as conn:
         # Query 1: todos os contadores em uma única passagem pela tabela
@@ -323,9 +349,11 @@ def adicionar_cobranca(chamado_id: int, mensagem: str, data_envio) -> int:
             "UPDATE chamados SET status='Aguardando cliente', atualizado_em=CURRENT_TIMESTAMP WHERE id=%s",
             (chamado_id,),
         )
-        return cobranca_id
+    _invalidar_cache()
+    return cobranca_id
 
 
+@st.cache_data(ttl=30)
 def listar_cobrancas_por_chamado(chamado_id: int):
     with get_db() as conn:
         cur = _exec(
@@ -368,13 +396,16 @@ def marcar_respondido(cobranca_id: int, resposta: str, data_resposta=None):
             "UPDATE chamados SET status='Respondido - Em andamento', atualizado_em=CURRENT_TIMESTAMP WHERE id=%s",
             (chamado_id,),
         )
+    _invalidar_cache()
 
 
 def excluir_cobranca(cobranca_id: int):
     with get_db() as conn:
         _exec(conn, "DELETE FROM cobrancas WHERE id=%s", (cobranca_id,))
+    _invalidar_cache()
 
 
+@st.cache_data(ttl=30)
 def listar_todas_cobrancas(apenas_pendentes: bool = False, cliente_id: int = None):
     where = []
     params = []
@@ -418,6 +449,7 @@ def listar_todas_cobrancas(apenas_pendentes: bool = False, cliente_id: int = Non
 
 # ─── CHECKLIST ───────────────────────────────────────────────────────────────
 
+@st.cache_data(ttl=30)
 def obter_checklist_completo():
     with get_db() as conn:
         cur = _exec(
@@ -441,8 +473,10 @@ def atualizar_status_modulo(cliente_id: int, modulo: str, status: str, chamado_i
                WHERE cliente_id=%s AND modulo=%s""",
             (status, chamado_id, cliente_id, modulo),
         )
+    _invalidar_cache()
 
 
+@st.cache_data(ttl=30)
 def obter_historico(data_inicio=None, data_fim=None, responsavel=None,
                     categoria=None, responsabilidade=None):
     where = ["ch.status = 'Resolvido'"]
