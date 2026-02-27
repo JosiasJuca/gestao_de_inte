@@ -146,9 +146,20 @@ def _renderizar_bloco_cliente(cid, cli):
         f'<span style="background:#e2e3e5;color:#383d41;font-size:12px;font-weight:600;'
         f'padding:2px 10px;border-radius:10px">{total_cob} cobrança(s)</span>'
     )
-    badge_pendentes = ""
-    if n_pendentes:
-        badge_pendentes = (
+
+    # Se houver cobranças respondidas E cobranças pendentes, mostrar "Em andamento"
+    # Caso contrário, mostrar o número de pendentes (se houver).
+    n_respondidas = total_cob - n_pendentes
+    badge_status = ""
+    if n_respondidas > 0 and n_pendentes > 0:
+        # Em andamento: usar cor distinta (azul) para indicar progresso
+        badge_status = (
+            f'<span style="background:#0d6efd;color:white;font-size:12px;font-weight:600;'
+            f'padding:2px 10px;border-radius:10px;margin-left:6px">⏳ Respondido - Em andamento</span>'
+        )
+    elif n_pendentes:
+        # Pendentes continuam com estilo amarelo
+        badge_status = (
             f'<span style="background:#fff3cd;color:#856404;font-size:12px;font-weight:600;'
             f'padding:2px 10px;border-radius:10px;margin-left:6px">⏳ {n_pendentes} pendente(s)</span>'
         )
@@ -157,7 +168,7 @@ def _renderizar_bloco_cliente(cid, cli):
         f'<div style="background:#e8eaf6;border-left:4px solid #3f51b5;padding:10px 16px;'
         f'border-radius:8px;margin-top:20px;margin-bottom:10px;display:flex;align-items:center;gap:10px">'
         f'<strong style="font-size:15px;color:#1a1a2e">👤 {cli["nome"]}</strong>'
-        f'&nbsp;{badge_total}{badge_pendentes}'
+        f'&nbsp;{badge_total}{badge_status}'
         f'<span style="margin-left:auto;font-size:12px;color:#555">{cli["responsavel"]}</span>'
         f'</div>',
         unsafe_allow_html=True,
