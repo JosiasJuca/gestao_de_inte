@@ -233,61 +233,54 @@ def renderizar_checklist():
 
     # ── Seção de edição ────────────────────────────────────────────────────────
     st.markdown("#### Editar status")
-    st.caption("Selecione o cliente e o módulo que deseja atualizar.")
+    st.caption("Selecione o cliente e edite todos os módulos de uma vez.")
 
     nomes_clientes = {info["nome"]: cid for cid, info in dados.items()}
+    opcoes_label = [_LABEL_STATUS[s] for s in STATUS_CHECKLIST]
 
-    col_e1, col_e2 = st.columns(2)
-    with col_e1:
-        cliente_sel_nome = st.selectbox(
-            "Cliente", list(nomes_clientes.keys()), key="ck_edit_cliente"
-        )
-    with col_e2:
-        modulo_sel = st.selectbox("Módulo", MODULOS_CHECKLIST, key="ck_edit_modulo")
-
+    cliente_sel_nome = st.selectbox(
+        "Cliente", list(nomes_clientes.keys()), key="ck_edit_cliente"
+    )
     cliente_sel_id = nomes_clientes[cliente_sel_nome]
-    row_atual = dados[cliente_sel_id]["modulos"].get(modulo_sel)
-    status_atual = row_atual["status"] if row_atual else "ok"
 
-    # Mostrar status atual com cor
-    cor_atual = CORES_CHECKLIST[status_atual]
-    icone_atual = ICONES_CHECKLIST[status_atual]
-    st.markdown(
-        f'Status atual: <span style="background:{cor_atual}22;color:{cor_atual};'
-        f'padding:3px 10px;border-radius:8px;font-weight:600">'
-        f'{icone_atual} {_LABEL_STATUS[status_atual]}</span>',
-        unsafe_allow_html=True,
-    )
-    st.markdown("")
+    with st.form("form_checklist_editar"):
+        novos_status = {}
+        for mod in MODULOS_CHECKLIST:
+            row_atual = dados[cliente_sel_id]["modulos"].get(mod)
+            status_atual = row_atual["status"] if row_atual else "ok"
+            cor_atual = CORES_CHECKLIST[status_atual]
+            icone_atual = ICONES_CHECKLIST[status_atual]
 
-    opcoes = [_LABEL_STATUS[s] for s in STATUS_CHECKLIST]
-    novo_label = st.radio(
-        "Novo status",
-        opcoes,
-        index=STATUS_CHECKLIST.index(status_atual),
-        horizontal=True,
-        key="ck_edit_radio",
-    )
-    novo_status = STATUS_CHECKLIST[opcoes.index(novo_label)]
+            col_mod, col_radio = st.columns([2, 5])
+            with col_mod:
+                st.markdown(
+                    f'<div style="padding-top:8px;font-weight:600">{mod} &nbsp;'
+                    f'<span style="background:{cor_atual}22;color:{cor_atual};'
+                    f'padding:2px 8px;border-radius:8px;font-size:12px">'
+                    f'{icone_atual} {_LABEL_STATUS[status_atual]}</span></div>',
+                    unsafe_allow_html=True,
+                )
+            with col_radio:
+                novo_label = st.radio(
+                    f"__{mod}__",
+                    opcoes_label,
+                    index=STATUS_CHECKLIST.index(status_atual),
+                    horizontal=True,
+                    key=f"ck_radio_{mod}",
+                    label_visibility="collapsed",
+                )
+                novos_status[mod] = STATUS_CHECKLIST[opcoes_label.index(novo_label)]
 
-    # Vincular chamado se for problema
-    chamado_vinculado = None
-    if novo_status == "problema":
-        chamados_cliente = [
-            c for c in chamados_abertos
-            if c["cliente_id"] == cliente_sel_id and c["categoria"] == modulo_sel
-        ]
-        if chamados_cliente:
-            opts = ["Nenhum"] + [f"#{c['id']} — {c['titulo']}" for c in chamados_cliente]
-            sel = st.selectbox("Vincular a chamado existente", opts, key="ck_edit_chamado")
-            if sel != "Nenhum":
-                idx = opts.index(sel) - 1
-                chamado_vinculado = chamados_cliente[idx]["id"]
-
-    if st.button("💾 Salvar alteração", type="primary", key="ck_salvar"):
-        atualizar_status_modulo(cliente_sel_id, modulo_sel, novo_status, chamado_vinculado)
-        adicionar_mensagem(
-            "sucesso",
-            f"{modulo_sel} de {cliente_sel_nome}: {_LABEL_STATUS[status_atual]} → {_LABEL_STATUS[novo_status]}",
-        )
-        st.rerun()
+        if st.form_submit_button("💾 Salvar todos", type="primary"):
+            alterados = 0
+            for mod in MODULOS_CHECKLIST:
+                row_atual = dados[cliente_sel_id]["modulos"].get(mod)
+                status_atual = row_atual["status"] if row_atual else "ok"
+                if novos_status[mod] != status_atual:
+                    atualizar_status_modulo(cliente_sel_id, mod, novos_status[mod], None)
+                    alterados += 1
+            if alterados:
+                adicionar_mensagem("sucesso", f"{alterados} módulo(s) de {cliente_sel_nome} atualizados.")
+            else:
+                adicionar_mensagem("info", "Nenhuma alteração detectada.")
+            st.rerun()
